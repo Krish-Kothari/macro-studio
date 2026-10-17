@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowLeft, Check, ChevronDown, Clock3, Command, Copy, History, LayoutDashboard, Play, Plus, Save, Search, Settings, Trash2, Undo2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Activity, ArrowLeft, Check, ChevronDown, Command, Copy, History, LayoutDashboard, Play, Plus, Search, Settings, Trash2, Undo2, X } from "lucide-react";
 import type { Execution, NodeType, Workflow, WorkflowNode } from "./types";
 import { nodeMeta } from "./types";
 import { validateWorkflow } from "./validation";
+import { executeWorkflow } from "./execution";
 
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -17,16 +18,26 @@ function sample(): Workflow {
   const nodes: WorkflowNode[] = types.map((type, i) => ({ id: uid(), type, label: labels[i], config: configs[type], x: 48 + i * 154, y: 150 }));
   return { id: uid(), name: "Developer Morning Setup", description: "A safe, sequential setup routine for the first hour of the day.", nodes, edges: nodes.slice(0, -1).map((n, i) => ({ source: n.id, target: nodes[i + 1].id })), updatedAt: now() };
 }
-const initial = (): Workflow[] => { const raw = localStorage.getItem("macro-workflows"); return raw ? JSON.parse(raw) : [sample()]; };
+function readStored<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    localStorage.removeItem(key);
+    return fallback;
+  }
+}
+const initial = (): Workflow[] => readStored("macro-workflows", [sample()]);
 
 export default function App() {
   const [workflows, setWorkflows] = useState<Workflow[]>(initial);
-  const [executions, setExecutions] = useState<Execution[]>(() => JSON.parse(localStorage.getItem("macro-executions") || "[]"));
+  const [executions, setExecutions] = useState<Execution[]>(() => readStored<Execution[]>("macro-executions", []));
   const [page, setPage] = useState<"dashboard" | "builder" | "history" | "settings">("dashboard");
   const [activeId, setActiveId] = useState(workflows[0]?.id);
   const [selectedId, setSelectedId] = useState<string>();
   const [query, setQuery] = useState("");
   const [running, setRunning] = useState<string>();
+  const cancelRequested = useRef(false);
   const [notice, setNotice] = useState("");
   const active = workflows.find((w) => w.id === activeId) ?? workflows[0];
 
@@ -45,11 +56,23 @@ export default function App() {
     setSelectedId(newNode.id);
   }
   function removeNode(id: string) { if (!active || active.nodes.find((n) => n.id === id)?.type === "trigger" || active.nodes.find((n) => n.id === id)?.type === "end") return; const incoming = active.edges.find((e) => e.target === id)?.source; const outgoing = active.edges.find((e) => e.source === id)?.target; updateWorkflow({ nodes: active.nodes.filter((n) => n.id !== id), edges: active.edges.filter((e) => e.source !== id && e.target !== id).concat(incoming && outgoing ? [{ source: incoming, target: outgoing }] : []) }); setSelectedId(undefined); }
-  function runWorkflow() {
-    if (!active) return; const errors = validateWorkflow(active); if (errors.length) { setNotice(errors[0]); return; }
-    const execution: Execution = { id: uid(), workflowId: active.id, workflowName: active.name, status: "completed", startedAt: now(), finishedAt: now(), steps: active.nodes.length };
-    setRunning(active.id); setNotice("Execution completed successfully"); setExecutions((items) => [execution, ...items]); updateWorkflow({ lastRunAt: execution.finishedAt }); setTimeout(() => setRunning(undefined), 600);
+  async function runWorkflow() {
+    if (!active || running) return;
+    const errors = validateWorkflow(active);
+    if (errors.length) { setNotice(errors[0]); return; }
+    const execution: Execution = { id: uid(), workflowId: active.id, workflowName: active.name, status: "running", startedAt: now(), steps: active.nodes.length, completedSteps: 0, stepExecutions: [] };
+    setRunning(active.id);
+    cancelRequested.current = false;
+    setExecutions((items) => [execution, ...items]);
+    const result = await executeWorkflow(active, execution, {
+      isCancelled: () => cancelRequested.current,
+      onUpdate: (updated) => setExecutions((items) => items.map((item) => item.id === updated.id ? updated : item))
+    });
+    setRunning(undefined);
+    if (result.status === "completed") updateWorkflow({ lastRunAt: result.finishedAt });
+    setNotice(result.status === "completed" ? "Execution completed successfully" : result.error || `Execution ${result.status}.`);
   }
+  function cancelWorkflow() { if (running) cancelRequested.current = true; }
   if (!active && page === "builder") return <div className="empty-page">Create a workflow to begin.</div>;
   return <div className="app-shell">
     <aside className="sidebar">
@@ -64,7 +87,7 @@ export default function App() {
     </aside>
     <main className="main">
       {page === "dashboard" && <Dashboard workflows={workflows} executions={executions} query={query} setQuery={setQuery} onCreate={createWorkflow} onOpen={openBuilder} />}
-      {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} running={!!running} onRun={runWorkflow} onBack={() => setPage("dashboard")} />}
+      {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} running={!!running} onRun={runWorkflow} onCancel={cancelWorkflow} onBack={() => setPage("dashboard")} />}
       {page === "history" && <HistoryPage executions={executions} />}
       {page === "settings" && <SettingsPage />}
     </main>
@@ -75,7 +98,7 @@ export default function App() {
 function Nav({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span>{active && <i />}</button>; }
 function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen }: { workflows: Workflow[]; executions: Execution[]; query: string; setQuery: (v: string) => void; onCreate: () => void; onOpen: (w: Workflow) => void }) {
   const filtered = workflows.filter((w) => w.name.toLowerCase().includes(query.toLowerCase())); const success = executions.filter((e) => e.status === "completed").length;
-  return <div className="page"><header className="page-header"><div><div className="eyebrow">Tuesday, October 17, 2026</div><h1>Make repetition<br /><em>disappear.</em></h1><p className="lede">A quiet place to design, run, and refine your desktop workflows.</p></div><button className="primary" onClick={onCreate}><Plus size={17} /> New workflow</button></header>
+  return <div className="page"><header className="page-header"><div><div className="eyebrow">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date())}</div><h1>Make repetition<br /><em>disappear.</em></h1><p className="lede">A quiet place to design, run, and refine your desktop workflows.</p></div><button className="primary" onClick={onCreate}><Plus size={17} /> New workflow</button></header>
     <section className="stats"><div><span>WORKFLOWS</span><strong>{workflows.length.toString().padStart(2, "0")}</strong></div><div><span>COMPLETED RUNS</span><strong>{success.toString().padStart(2, "0")}</strong></div><div><span>LAST ACTIVITY</span><strong>{executions[0] ? "Just now" : "—"}</strong></div></section>
     <div className="section-heading"><div><div className="eyebrow">Your workspace</div><h2>Workflows</h2></div><label className="search"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search workflows" /></label></div>
     <div className="workflow-list">{filtered.map((w, i) => <button className="workflow-row" key={w.id} onClick={() => onOpen(w)}><span className="row-index">0{i + 1}</span><span className="workflow-name"><b>{w.name}</b><small>{w.description || "No description"} · Updated {new Date(w.updatedAt).toLocaleDateString()}</small></span><span className="node-count">{w.nodes.length} steps</span><ChevronDown size={16} className="rotate" /></button>)}{!filtered.length && <div className="empty-state">No workflows match that search.</div>}</div>
@@ -83,14 +106,14 @@ function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen }:
   </div>;
 }
 
-function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, running, onRun, onBack }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; running: boolean; onRun: () => void; onBack: () => void }) {
+function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, running, onRun, onCancel, onBack }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; running: boolean; onRun: () => void; onCancel: () => void; onBack: () => void }) {
   const selected = workflow.nodes.find((n) => n.id === selectedId); const [consoleOpen, setConsoleOpen] = useState(true);
-  return <div className="builder"><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button"><Undo2 size={16} /></button><button className="icon-button"><Copy size={16} /></button><button className="primary small" onClick={onRun} disabled={running}><Play size={14} /> {running ? "Running" : "Run workflow"}</button></header>
+  return <div className="builder"><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button" title="Undo"><Undo2 size={16} /></button><button className="icon-button" title="Duplicate selected action" onClick={() => selected && addNode(selected.type)}><Copy size={16} /></button>{running ? <button className="danger-button header-cancel" onClick={onCancel}><X size={14} /> Cancel</button> : <button className="primary small" onClick={onRun}><Play size={14} /> Run workflow</button>}</header>
     <div className="builder-body"><aside className="library"><div className="eyebrow">Action library</div><div className="library-search"><Search size={14} /> Find an action</div>{(Object.keys(nodeMeta) as NodeType[]).filter((t) => !["trigger", "end"].includes(t)).map((type) => <button className="action-item" key={type} onClick={() => addNode(type)}><span className={`action-icon ${type}`}>{nodeMeta[type].icon}</span><span><b>{nodeMeta[type].label}</b><small>{nodeMeta[type].category}</small></span><Plus size={14} /></button>)}</aside>
-      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>⌘ + K to search actions</span></div><div className="canvas"><div className="grid" />{workflow.edges.map((edge) => { const a = workflow.nodes.find((n) => n.id === edge.source); const b = workflow.nodes.find((n) => n.id === edge.target); return a && b ? <div key={`${edge.source}-${edge.target}`} className="connector" style={{ left: a.x + 112, top: a.y + 38, width: b.x - a.x - 10 }} /> : null; })}{workflow.nodes.map((node) => <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onClick={() => setSelectedId(node.id)}><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="handle" /></button>)}</div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> Ready for execution <span>Validate your path before running.</span></div>}</section>
-      <aside className="inspector"><div className="eyebrow">Properties</div>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>
+      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Changes save automatically</span></div><div className="canvas"><div className="grid" />{workflow.edges.map((edge) => { const a = workflow.nodes.find((n) => n.id === edge.source); const b = workflow.nodes.find((n) => n.id === edge.target); return a && b ? <div key={`${edge.source}-${edge.target}`} className="connector" style={{ left: a.x + 112, top: a.y + 38, width: b.x - a.x - 10 }} /> : null; })}{workflow.nodes.map((node) => <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onClick={() => setSelectedId(node.id)}><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="handle" /></button>)}</div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
+      <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>
     </div></div>;
 }
 
-function HistoryPage({ executions }: { executions: Execution[] }) { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Observability</div><h1>Run history</h1><p className="lede">Every execution, recorded locally.</p></div></header><div className="history-list">{executions.length ? executions.map((e) => <div className="history-row" key={e.id}><span className={`run-status ${e.status}`}><Check size={13} /></span><span><b>{e.workflowName}</b><small>{new Date(e.startedAt).toLocaleString()}</small></span><span className="history-meta">{e.steps} steps · {e.status}</span><code>{e.id.slice(0, 8)}</code></div>) : <div className="empty-state">No runs yet. Open a workflow and press Run.</div>}</div></div>; }
+function HistoryPage({ executions }: { executions: Execution[] }) { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Observability</div><h1>Run history</h1><p className="lede">Every execution, recorded locally.</p></div></header><div className="history-list">{executions.length ? executions.map((e) => <div className="history-row" key={e.id}><span className={`run-status ${e.status}`}>{e.status === "completed" ? <Check size={13} /> : e.status === "cancelled" ? <X size={13} /> : <Activity size={13} />}</span><span><b>{e.workflowName}</b><small>{new Date(e.startedAt).toLocaleString()}</small></span><span className="history-meta">{e.completedSteps}/{e.steps} steps · {e.status}{e.error ? ` · ${e.error}` : ""}</span><code>{e.id.slice(0, 8)}</code></div>) : <div className="empty-state">No runs yet. Open a workflow and press Run.</div>}</div></div>; }
 function SettingsPage() { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Workspace preferences</div><h1>Settings</h1><p className="lede">Macro Studio is local-first by design.</p></div></header><div className="settings-list"><div><b>Appearance</b><span>Dark / Obsidian</span></div><div><b>Default action timeout</b><span>30 seconds</span></div><div><b>Execution policy</b><span>Commands require explicit approval</span></div><div><b>Storage</b><span>Browser local storage · offline</span></div></div></div>; }
