@@ -16,7 +16,11 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - `src/` contains the renderer UI, shared workflow types, and validation.
 - `electron/main.ts` owns the BrowserWindow and privileged external URL opening.
 - `electron/preload.ts` exposes only a purpose-specific API.
-- Workflow and execution records currently persist in browser local storage so the app remains usable without an account or cloud service.
+- Workflow and execution records currently persist in browser local storage so the app remains usable without an account or cloud service. Stored JSON is parsed defensively and reset safely if it becomes malformed.
+
+## Current execution behavior
+
+The sequential execution engine validates the graph before every run and reports running, succeeded, failed, and cancelled step states. Wait actions are asynchronous and cancellable, website actions use the validated Electron URL bridge, and notification actions request browser notification permission. Application and command nodes are intentionally blocked until the explicit desktop approval and native adapter layer is implemented; they fail with an actionable message rather than recording a false success.
 
 ## Known limitations
 
