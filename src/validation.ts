@@ -19,6 +19,7 @@ export function validateWorkflow(workflow: Workflow): string[] {
   if (starts.length !== 1) return ["A workflow must contain exactly one Manual Trigger."];
   if (ends.length !== 1) return ["A workflow must contain exactly one End node."];
   const ids = new Set(workflow.nodes.map((n) => n.id));
+  if (ids.size !== workflow.nodes.length) return ["Every node must have a unique ID."];
   if (workflow.edges.some((e) => !ids.has(e.source) || !ids.has(e.target) || e.source === e.target)) return ["Connections must reference distinct nodes in this workflow."];
   const outgoing = new Map<string, string>();
   for (const edge of workflow.edges) {

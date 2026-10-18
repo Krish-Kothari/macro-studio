@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowLeft, Check, ChevronDown, Command, Copy, History, LayoutDashboard, Play, Plus, Search, Settings, Trash2, Undo2, X } from "lucide-react";
+import { Activity, ArrowLeft, Check, ChevronDown, Command, Copy, Download, History, LayoutDashboard, Play, Plus, Search, Settings, Trash2, Undo2, Upload, X } from "lucide-react";
 import type { Execution, NodeType, Workflow, WorkflowNode } from "./types";
 import { nodeMeta } from "./types";
 import { validateWorkflow } from "./validation";
 import { executeWorkflow } from "./execution";
+import { parseWorkflow, serializeWorkflow } from "./workflow-io";
 
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -39,6 +40,8 @@ export default function App() {
   const [running, setRunning] = useState<string>();
   const cancelRequested = useRef(false);
   const [notice, setNotice] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const importInput = useRef<HTMLInputElement>(null);
   const active = workflows.find((w) => w.id === activeId) ?? workflows[0];
 
   useEffect(() => { localStorage.setItem("macro-workflows", JSON.stringify(workflows)); }, [workflows]);
@@ -73,6 +76,40 @@ export default function App() {
     setNotice(result.status === "completed" ? "Execution completed successfully" : result.error || `Execution ${result.status}.`);
   }
   function cancelWorkflow() { if (running) cancelRequested.current = true; }
+  function exportWorkflow(workflow: Workflow) {
+    const blob = new Blob([serializeWorkflow(workflow)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${workflow.name.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "workflow"}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    setNotice("Workflow exported.");
+  }
+  function importWorkflow(file: File) {
+    file.text().then((source) => {
+      try {
+        const imported = { ...parseWorkflow(source), id: uid(), updatedAt: now() };
+        setWorkflows((items) => [imported, ...items]);
+        setActiveId(imported.id);
+        setNotice(`Imported "${imported.name}".`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Workflow import failed.");
+      }
+    }).catch(() => setNotice("Workflow import failed."));
+  }
+  function deleteWorkflow(workflow: Workflow) {
+    if (running === workflow.id) return;
+    if (!window.confirm(`Delete "${workflow.name}"? This cannot be undone.`)) return;
+    setWorkflows((items) => items.filter((item) => item.id !== workflow.id));
+    setExecutions((items) => items.filter((item) => item.workflowId !== workflow.id));
+    if (activeId === workflow.id) setActiveId(workflows.find((item) => item.id !== workflow.id)?.id ?? "");
+    setNotice("Workflow deleted.");
+  }
+  function clearHistory() {
+    if (!executions.length || !window.confirm("Clear all run history? This cannot be undone.")) return;
+    setExecutions([]);
+    setNotice("Run history cleared.");
+  }
   if (!active && page === "builder") return <div className="empty-page">Create a workflow to begin.</div>;
   return <div className="app-shell">
     <aside className="sidebar">
@@ -86,22 +123,23 @@ export default function App() {
       <div className="sidebar-bottom"><Nav icon={<Settings />} label="Settings" active={page === "settings"} onClick={() => setPage("settings")} /><div className="version">v0.1 / LOCAL MODE</div></div>
     </aside>
     <main className="main">
-      {page === "dashboard" && <Dashboard workflows={workflows} executions={executions} query={query} setQuery={setQuery} onCreate={createWorkflow} onOpen={openBuilder} />}
+      {page === "dashboard" && <Dashboard workflows={workflows} executions={executions} query={query} setQuery={setQuery} onCreate={createWorkflow} onOpen={openBuilder} onExport={exportWorkflow} onDelete={deleteWorkflow} onImport={() => importInput.current?.click()} />}
       {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} running={!!running} onRun={runWorkflow} onCancel={cancelWorkflow} onBack={() => setPage("dashboard")} />}
-      {page === "history" && <HistoryPage executions={executions} />}
+      {page === "history" && <HistoryPage executions={executions} query={historyQuery} setQuery={setHistoryQuery} onClear={clearHistory} />}
       {page === "settings" && <SettingsPage />}
     </main>
+    <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) importWorkflow(file); event.target.value = ""; }} />
     {notice && <div className="toast"><Check size={15} />{notice}</div>}
   </div>;
 }
 
 function Nav({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span>{active && <i />}</button>; }
-function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen }: { workflows: Workflow[]; executions: Execution[]; query: string; setQuery: (v: string) => void; onCreate: () => void; onOpen: (w: Workflow) => void }) {
+function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen, onExport, onDelete, onImport }: { workflows: Workflow[]; executions: Execution[]; query: string; setQuery: (v: string) => void; onCreate: () => void; onOpen: (w: Workflow) => void; onExport: (w: Workflow) => void; onDelete: (w: Workflow) => void; onImport: () => void }) {
   const filtered = workflows.filter((w) => w.name.toLowerCase().includes(query.toLowerCase())); const success = executions.filter((e) => e.status === "completed").length;
-  return <div className="page"><header className="page-header"><div><div className="eyebrow">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date())}</div><h1>Make repetition<br /><em>disappear.</em></h1><p className="lede">A quiet place to design, run, and refine your desktop workflows.</p></div><button className="primary" onClick={onCreate}><Plus size={17} /> New workflow</button></header>
+  return <div className="page"><header className="page-header"><div><div className="eyebrow">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date())}</div><h1>Make repetition<br /><em>disappear.</em></h1><p className="lede">A quiet place to design, run, and refine your desktop workflows.</p></div><div className="header-actions"><button className="secondary" onClick={onImport}><Upload size={14} /> Import</button><button className="primary" onClick={onCreate}><Plus size={17} /> New workflow</button></div></header>
     <section className="stats"><div><span>WORKFLOWS</span><strong>{workflows.length.toString().padStart(2, "0")}</strong></div><div><span>COMPLETED RUNS</span><strong>{success.toString().padStart(2, "0")}</strong></div><div><span>LAST ACTIVITY</span><strong>{executions[0] ? "Just now" : "—"}</strong></div></section>
     <div className="section-heading"><div><div className="eyebrow">Your workspace</div><h2>Workflows</h2></div><label className="search"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search workflows" /></label></div>
-    <div className="workflow-list">{filtered.map((w, i) => <button className="workflow-row" key={w.id} onClick={() => onOpen(w)}><span className="row-index">0{i + 1}</span><span className="workflow-name"><b>{w.name}</b><small>{w.description || "No description"} · Updated {new Date(w.updatedAt).toLocaleDateString()}</small></span><span className="node-count">{w.nodes.length} steps</span><ChevronDown size={16} className="rotate" /></button>)}{!filtered.length && <div className="empty-state">No workflows match that search.</div>}</div>
+    <div className="workflow-list">{filtered.map((w, i) => <div className="workflow-row" key={w.id}><button className="workflow-open" onClick={() => onOpen(w)}><span className="row-index">0{i + 1}</span><span className="workflow-name"><b>{w.name}</b><small>{w.description || "No description"} · Updated {new Date(w.updatedAt).toLocaleDateString()}</small></span><span className="node-count">{w.nodes.length} steps</span><ChevronDown size={16} className="rotate" /></button><button className="row-action" title="Export workflow" onClick={() => onExport(w)}><Download size={14} /></button><button className="row-action danger" title="Delete workflow" onClick={() => onDelete(w)}><Trash2 size={14} /></button></div>)}{!filtered.length && <div className="empty-state">No workflows match that search.</div>}</div>
     <div className="template-line"><span className="eyebrow">START FROM A TEMPLATE</span><button onClick={onCreate}><Command size={15} /> Developer Morning Setup <Plus size={15} /></button></div>
   </div>;
 }
@@ -115,5 +153,8 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
     </div></div>;
 }
 
-function HistoryPage({ executions }: { executions: Execution[] }) { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Observability</div><h1>Run history</h1><p className="lede">Every execution, recorded locally.</p></div></header><div className="history-list">{executions.length ? executions.map((e) => <div className="history-row" key={e.id}><span className={`run-status ${e.status}`}>{e.status === "completed" ? <Check size={13} /> : e.status === "cancelled" ? <X size={13} /> : <Activity size={13} />}</span><span><b>{e.workflowName}</b><small>{new Date(e.startedAt).toLocaleString()}</small></span><span className="history-meta">{e.completedSteps}/{e.steps} steps · {e.status}{e.error ? ` · ${e.error}` : ""}</span><code>{e.id.slice(0, 8)}</code></div>) : <div className="empty-state">No runs yet. Open a workflow and press Run.</div>}</div></div>; }
+function HistoryPage({ executions, query, setQuery, onClear }: { executions: Execution[]; query: string; setQuery: (value: string) => void; onClear: () => void }) {
+  const filtered = executions.filter((execution) => execution.workflowName.toLowerCase().includes(query.toLowerCase()) || execution.status.includes(query.toLowerCase()));
+  return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Observability</div><h1>Run history</h1><p className="lede">Every execution, recorded locally.</p></div><button className="secondary" onClick={onClear} disabled={!executions.length}><Trash2 size={14} /> Clear history</button></header><label className="search history-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter runs" /></label><div className="history-list">{filtered.length ? filtered.map((e) => <div className="history-row" key={e.id}><span className={`run-status ${e.status}`}>{e.status === "completed" ? <Check size={13} /> : e.status === "cancelled" ? <X size={13} /> : <Activity size={13} />}</span><span><b>{e.workflowName}</b><small>{new Date(e.startedAt).toLocaleString()}</small></span><span className="history-meta">{e.completedSteps}/{e.steps} steps · {e.status}{e.error ? ` · ${e.error}` : ""}</span><code>{e.id.slice(0, 8)}</code></div>) : <div className="empty-state">{executions.length ? "No runs match this filter." : "No runs yet. Open a workflow and press Run."}</div>}</div></div>;
+}
 function SettingsPage() { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Workspace preferences</div><h1>Settings</h1><p className="lede">Macro Studio is local-first by design.</p></div></header><div className="settings-list"><div><b>Appearance</b><span>Dark / Obsidian</span></div><div><b>Default action timeout</b><span>30 seconds</span></div><div><b>Execution policy</b><span>Commands require explicit approval</span></div><div><b>Storage</b><span>Browser local storage · offline</span></div></div></div>; }

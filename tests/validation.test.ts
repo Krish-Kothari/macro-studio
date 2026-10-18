@@ -11,4 +11,5 @@ describe("workflow validation", () => {
   it("accepts a connected sequential path", () => expect(validateWorkflow(workflow)).toEqual([]));
   it("rejects disconnected nodes", () => expect(validateWorkflow({ ...workflow, nodes: [...workflow.nodes, { id: "x", type: "wait", label: "orphan", config: {}, x: 0, y: 0 }] })).toEqual(["Every node must be connected from the trigger to the End node."]));
   it("rejects branching", () => expect(validateWorkflow({ ...workflow, edges: [...workflow.edges, { source: "a", target: "c" }] })).toEqual(["V1 workflows support one sequential path only."]));
+  it("rejects duplicate node IDs", () => expect(validateWorkflow({ ...workflow, nodes: workflow.nodes.map((node, index) => index === 2 ? { ...node, id: "b" } : node) })).toEqual(["Every node must have a unique ID."]));
 });

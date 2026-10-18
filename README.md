@@ -17,6 +17,8 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - `electron/main.ts` owns the BrowserWindow and privileged external URL opening.
 - `electron/preload.ts` exposes only a purpose-specific API.
 - Workflow and execution records currently persist in browser local storage so the app remains usable without an account or cloud service. Stored JSON is parsed defensively and reset safely if it becomes malformed.
+- Workflows can be exported to and imported from validated JSON files for backup, review, and transfer between local installations.
+- Run history can be searched and cleared from the Observability view; deleting a workflow also removes its associated local run records.
 
 ## Current execution behavior
 
@@ -24,4 +26,4 @@ The sequential execution engine validates the graph before every run and reports
 
 ## Known limitations
 
-The editor currently models and validates a sequential path. Full OS adapters (application launch, approved child processes, cancellable waits, notifications), SQLite migrations, and packaged installer signing are the next integration layer; no unsupported capability is represented as successful execution.
+The editor currently models and validates a sequential path. Full OS adapters (application launch, approved child processes, cancellable waits, notifications), SQLite migrations, and packaged installer signing are the next integration layer; no unsupported capability is represented as successful execution. Branching and parallel execution are intentionally rejected until the graph model supports them.
