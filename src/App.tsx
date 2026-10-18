@@ -146,9 +146,44 @@ function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen, o
 
 function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, running, onRun, onCancel, onBack }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; running: boolean; onRun: () => void; onCancel: () => void; onBack: () => void }) {
   const selected = workflow.nodes.find((n) => n.id === selectedId); const [consoleOpen, setConsoleOpen] = useState(true);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ id: string; offsetX: number; offsetY: number }>();
+  function startDragging(event: React.PointerEvent<HTMLButtonElement>, node: WorkflowNode) {
+    if (running || !canvasRef.current) return;
+    const bounds = canvasRef.current.getBoundingClientRect();
+    dragRef.current = { id: node.id, offsetX: event.clientX - bounds.left - node.x, offsetY: event.clientY - bounds.top - node.y };
+    setSelectedId(node.id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function dragNode(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || !canvasRef.current) return;
+    const bounds = canvasRef.current.getBoundingClientRect();
+    updateNode(drag.id, {
+      x: Math.max(8, Math.round(event.clientX - bounds.left - drag.offsetX)),
+      y: Math.max(8, Math.round(event.clientY - bounds.top - drag.offsetY))
+    });
+  }
+  function stopDragging() { dragRef.current = undefined; }
+  function connectionStyle(source: WorkflowNode, target: WorkflowNode): React.CSSProperties {
+    const sourceX = source.x + 122;
+    const sourceY = source.y + 38;
+    const targetX = target.x;
+    const targetY = target.y + 38;
+    const deltaX = targetX - sourceX;
+    const deltaY = targetY - sourceY;
+    return {
+      left: sourceX,
+      top: sourceY,
+      width: Math.sqrt(deltaX ** 2 + deltaY ** 2),
+      transform: `rotate(${Math.atan2(deltaY, deltaX)}rad)`,
+      transformOrigin: "left center"
+    };
+  }
   return <div className="builder"><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button" title="Undo"><Undo2 size={16} /></button><button className="icon-button" title="Duplicate selected action" onClick={() => selected && addNode(selected.type)}><Copy size={16} /></button>{running ? <button className="danger-button header-cancel" onClick={onCancel}><X size={14} /> Cancel</button> : <button className="primary small" onClick={onRun}><Play size={14} /> Run workflow</button>}</header>
     <div className="builder-body"><aside className="library"><div className="eyebrow">Action library</div><div className="library-search"><Search size={14} /> Find an action</div>{(Object.keys(nodeMeta) as NodeType[]).filter((t) => !["trigger", "end"].includes(t)).map((type) => <button className="action-item" key={type} onClick={() => addNode(type)}><span className={`action-icon ${type}`}>{nodeMeta[type].icon}</span><span><b>{nodeMeta[type].label}</b><small>{nodeMeta[type].category}</small></span><Plus size={14} /></button>)}</aside>
-      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Changes save automatically</span></div><div className="canvas"><div className="grid" />{workflow.edges.map((edge) => { const a = workflow.nodes.find((n) => n.id === edge.source); const b = workflow.nodes.find((n) => n.id === edge.target); return a && b ? <div key={`${edge.source}-${edge.target}`} className="connector" style={{ left: a.x + 112, top: a.y + 38, width: b.x - a.x - 10 }} /> : null; })}{workflow.nodes.map((node) => <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onClick={() => setSelectedId(node.id)}><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="handle" /></button>)}</div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
+      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Drag actions to arrange · Changes save automatically</span></div><div ref={canvasRef} className="canvas" onPointerMove={dragNode} onPointerUp={stopDragging} onPointerCancel={stopDragging}><div className="grid" />{workflow.edges.map((edge) => { const source = workflow.nodes.find((node) => node.id === edge.source); const target = workflow.nodes.find((node) => node.id === edge.target); return source && target ? <div key={`${edge.source}-${edge.target}`} className="connector" style={connectionStyle(source, target)} /> : null; })}{workflow.nodes.map((node) => <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onPointerDown={(event) => startDragging(event, node)} onClick={() => setSelectedId(node.id)} title="Drag to move action"><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="handle" /></button>)}</div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
       <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>
     </div></div>;
 }
