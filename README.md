@@ -19,6 +19,7 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - Workflow and execution records currently persist in browser local storage so the app remains usable without an account or cloud service. Stored JSON is parsed defensively and reset safely if it becomes malformed.
 - Workflows can be exported to and imported from validated JSON files for backup, review, and transfer between local installations.
 - Run history can be searched and cleared from the Observability view; deleting a workflow also removes its associated local run records.
+- The builder supports undo/redo with keyboard shortcuts, ⌘/Ctrl+Enter to run, Escape to cancel, and zoom controls for large workflow canvases.
 
 ## Current execution behavior
 
