@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, ArrowLeft, Check, ChevronDown, Command, Copy, Download, History, LayoutDashboard, Maximize2, Play, Plus, Redo2, Search, Settings, Trash2, Undo2, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Activity, ArrowLeft, Check, ChevronDown, Command, Copy, Download, Eye, EyeOff, History, LayoutDashboard, LogOut, Maximize2, Play, Plus, Redo2, Search, Settings, ShieldCheck, Trash2, Undo2, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
 import type { Execution, NodeType, Workflow, WorkflowNode } from "./types";
 import { nodeMeta } from "./types";
 import { validateWorkflow } from "./validation";
@@ -29,8 +29,16 @@ function readStored<T>(key: string, fallback: T): T {
   }
 }
 const initial = (): Workflow[] => readStored("macro-workflows", [sample()]);
+type LocalAccount = { email: string; name: string; passwordHash: string; createdAt: string };
+async function hashPassword(password: string): Promise<string> {
+  const bytes = new TextEncoder().encode(password);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 export default function App() {
+  const [sessionEmail, setSessionEmail] = useState(() => sessionStorage.getItem("macro-session"));
+  const [account, setAccount] = useState<LocalAccount | null>(() => readStored<LocalAccount | null>("macro-account", null));
   const [workflows, setWorkflows] = useState<Workflow[]>(initial);
   const [executions, setExecutions] = useState<Execution[]>(() => readStored<Execution[]>("macro-executions", []));
   const [page, setPage] = useState<"dashboard" | "builder" | "history" | "settings">("dashboard");
@@ -46,6 +54,10 @@ export default function App() {
   const importInput = useRef<HTMLInputElement>(null);
   const historyRef = useRef<Record<string, { undo: Workflow[]; redo: Workflow[] }>>({});
   const active = workflows.find((w) => w.id === activeId) ?? workflows[0];
+
+  if (!sessionEmail || !account) {
+    return <AuthPage account={account} onAuthenticated={(nextAccount) => { setAccount(nextAccount); setSessionEmail(nextAccount.email); sessionStorage.setItem("macro-session", nextAccount.email); }} />;
+  }
 
   useEffect(() => { localStorage.setItem("macro-workflows", JSON.stringify(workflows)); }, [workflows]);
   useEffect(() => { localStorage.setItem("macro-executions", JSON.stringify(executions)); }, [executions]);
@@ -194,7 +206,7 @@ export default function App() {
       {page === "dashboard" && <Dashboard workflows={workflows} executions={executions} query={query} setQuery={setQuery} onCreate={createWorkflow} onOpen={openBuilder} onExport={exportWorkflow} onDelete={deleteWorkflow} onImport={() => importInput.current?.click()} />}
       {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} running={!!running} onRun={runWorkflow} onCancel={cancelWorkflow} onBack={() => setPage("dashboard")} onUndo={undoWorkflow} onRedo={redoWorkflow} />}
       {page === "history" && <HistoryPage executions={executions} query={historyQuery} setQuery={setHistoryQuery} onClear={clearHistory} />}
-      {page === "settings" && <SettingsPage />}
+      {page === "settings" && <SettingsPage account={account} onSignOut={() => { sessionStorage.removeItem("macro-session"); setSessionEmail(null); }} />}
     </main>
     <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) importWorkflow(file); event.target.value = ""; }} />
     {paletteOpen && <CommandPalette query={paletteQuery} setQuery={setPaletteQuery} onClose={() => setPaletteOpen(false)} onAction={runPaletteAction} canRun={!!active && !running} />}
@@ -211,6 +223,49 @@ function CommandPalette({ query, setQuery, onClose, onAction, canRun }: { query:
     { id: "dashboard", label: "Open dashboard", hint: "Workspace", enabled: true }
   ].filter((action) => action.enabled && action.label.toLowerCase().includes(query.toLowerCase()));
   return <div className="palette-backdrop" onClick={onClose}><div className="command-palette" onClick={(event) => event.stopPropagation()}><div className="palette-input"><Command size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") onClose(); if (event.key === "Enter" && actions[0]) onAction(actions[0].id); }} placeholder="Search commands..." /></div><div className="palette-list">{actions.length ? actions.map((action) => <button key={action.id} onClick={() => onAction(action.id)}><span>{action.label}</span><small>{action.hint}</small></button>) : <div className="empty-state">No commands match.</div>}</div><div className="palette-footer">Press <b>⌘ K</b> anytime to open · <b>Esc</b> to close</div></div></div>;
+}
+
+function AuthPage({ account, onAuthenticated }: { account: LocalAccount | null; onAuthenticated: (account: LocalAccount) => void }) {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState(account?.email ?? "");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return setError("Enter a valid email address.");
+    if (password.length < 8) return setError("Use at least 8 characters for your password.");
+    if (mode === "signup" && name.trim().length < 2) return setError("Tell us your name to personalize the studio.");
+    setBusy(true);
+    try {
+      const passwordHash = await hashPassword(password);
+      const stored = readStored<LocalAccount | null>("macro-account", null);
+      if (mode === "signin") {
+        if (!stored || stored.email !== normalizedEmail || stored.passwordHash !== passwordHash) {
+          setError("Those credentials do not match this local workspace.");
+          return;
+        }
+        onAuthenticated(stored);
+      } else {
+        if (stored && stored.email !== normalizedEmail) {
+          setError("This local app supports one workspace account. Sign in with the existing account or reset local data.");
+          return;
+        }
+        const nextAccount: LocalAccount = { email: normalizedEmail, name: name.trim(), passwordHash, createdAt: now() };
+        localStorage.setItem("macro-account", JSON.stringify(nextAccount));
+        onAuthenticated(nextAccount);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="auth-shell"><div className="auth-visual"><div className="auth-brand"><span className="brand-mark">M</span><span>MACRO<br /><b>STUDIO</b></span></div><div className="auth-hero"><span className="eyebrow">LOCAL-FIRST AUTOMATION</span><h1>Make repetition<br /><em>disappear.</em></h1><p>Design precise desktop workflows, connect every action, and run with confidence.</p><div className="auth-orbit"><span className="orbit-node orbit-one">↗</span><span className="orbit-node orbit-two">◷</span><span className="orbit-node orbit-three">◇</span><div className="orbit-core">M</div></div></div><div className="auth-trust"><ShieldCheck size={15} /> Your workspace stays on this device</div></div><div className="auth-panel"><div className="auth-panel-top"><span className="eyebrow">PRIVATE WORKSPACE</span><span className="auth-mode">OFFLINE MODE</span></div><div className="auth-card"><div className="auth-card-heading"><h2>{mode === "signin" ? "Welcome back." : "Start your studio."}</h2><p>{mode === "signin" ? "Continue where your workflows left off." : "Create a local account in seconds."}</p></div><div className="auth-tabs"><button className={mode === "signin" ? "active" : ""} onClick={() => { setMode("signin"); setError(""); }}>Sign in</button><button className={mode === "signup" ? "active" : ""} onClick={() => { setMode("signup"); setError(""); }}>Sign up</button></div><form onSubmit={submit}>{mode === "signup" && <label>Your name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Krish Kothari" autoComplete="name" /></label>}<label>Email address<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" type="email" autoComplete="email" /></label><label>Password<div className="password-field"><input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8+ characters" type={showPassword ? "text" : "password"} autoComplete={mode === "signin" ? "current-password" : "new-password"} /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>{error && <div className="auth-error">{error}</div>}<button className="primary auth-submit" disabled={busy}>{busy ? "Preparing your workspace..." : mode === "signin" ? "Enter workspace" : "Create local workspace"} <ArrowLeft size={15} className="auth-arrow" /></button></form><p className="auth-note"><ShieldCheck size={13} /> Passwords are hashed locally. No account is sent to a server.</p></div><div className="auth-footer">Macro Studio <span>·</span> Precision automation for calm, focused work.</div></div></div>;
 }
 
 function Nav({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span>{active && <i />}</button>; }
@@ -309,4 +364,4 @@ function HistoryPage({ executions, query, setQuery, onClear }: { executions: Exe
   const filtered = executions.filter((execution) => execution.workflowName.toLowerCase().includes(query.toLowerCase()) || execution.status.includes(query.toLowerCase()));
   return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Observability</div><h1>Run history</h1><p className="lede">Every execution, recorded locally.</p></div><button className="secondary" onClick={onClear} disabled={!executions.length}><Trash2 size={14} /> Clear history</button></header><label className="search history-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter runs" /></label><div className="history-list">{filtered.length ? filtered.map((e) => <div className="history-row" key={e.id}><span className={`run-status ${e.status}`}>{e.status === "completed" ? <Check size={13} /> : e.status === "cancelled" ? <X size={13} /> : <Activity size={13} />}</span><span><b>{e.workflowName}</b><small>{new Date(e.startedAt).toLocaleString()}</small></span><span className="history-meta">{e.completedSteps}/{e.steps} steps · {e.status}{e.error ? ` · ${e.error}` : ""}</span><code>{e.id.slice(0, 8)}</code></div>) : <div className="empty-state">{executions.length ? "No runs match this filter." : "No runs yet. Open a workflow and press Run."}</div>}</div></div>;
 }
-function SettingsPage() { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Workspace preferences</div><h1>Settings</h1><p className="lede">Macro Studio is local-first by design.</p></div></header><div className="settings-list"><div><b>Appearance</b><span>Dark / Obsidian</span></div><div><b>Default action timeout</b><span>30 seconds</span></div><div><b>Execution policy</b><span>Commands require explicit approval</span></div><div><b>Storage</b><span>Browser local storage · offline</span></div></div></div>; }
+function SettingsPage({ account, onSignOut }: { account: LocalAccount; onSignOut: () => void }) { return <div className="page"><header className="page-header compact"><div><div className="eyebrow">Workspace preferences</div><h1>Settings</h1><p className="lede">Macro Studio is local-first by design.</p></div><button className="secondary" onClick={onSignOut}><LogOut size={14} /> Sign out</button></header><div className="profile-card"><span className="profile-avatar">{account.name.slice(0, 1).toUpperCase()}</span><div><b>{account.name}</b><small>{account.email}</small></div><span className="auth-mode">LOCAL ACCOUNT</span></div><div className="settings-list"><div><b>Appearance</b><span>Dark / Obsidian</span></div><div><b>Default action timeout</b><span>30 seconds</span></div><div><b>Execution policy</b><span>Commands require explicit approval</span></div><div><b>Storage</b><span>Browser local storage · offline</span></div></div></div>; }

@@ -21,6 +21,7 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - Run history can be searched and cleared from the Observability view; deleting a workflow also removes its associated local run records.
 - The builder supports undo/redo with keyboard shortcuts, ⌘/Ctrl+Enter to run, Escape to cancel, and zoom controls for large workflow canvases.
 - A command palette opens with ⌘/Ctrl+K, the action library is searchable, invalid workflows show a live health badge, and Focus mode expands the canvas for complex automations.
+- The app includes a local sign-in/sign-up gateway with Web Crypto password hashing, session persistence, a profile surface, and sign-out. It is intentionally offline and does not claim to replace a hosted identity provider.
 
 ## Current execution behavior
 
