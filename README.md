@@ -20,6 +20,7 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - Workflows can be exported to and imported from validated JSON files for backup, review, and transfer between local installations.
 - Run history can be searched and cleared from the Observability view; deleting a workflow also removes its associated local run records.
 - The builder supports undo/redo with keyboard shortcuts, ⌘/Ctrl+Enter to run, Escape to cancel, and zoom controls for large workflow canvases.
+- A command palette opens with ⌘/Ctrl+K, the action library is searchable, invalid workflows show a live health badge, and Focus mode expands the canvas for complex automations.
 
 ## Current execution behavior
 

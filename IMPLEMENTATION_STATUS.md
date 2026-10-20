@@ -9,6 +9,7 @@
 - Node selection, configuration editing, insertion, deletion, and workflow naming
 - Cancellable sequential execution with per-step output, failure, and cancellation records
 - Rewireable node connections, draggable canvas nodes, zoom controls, and workflow undo/redo
+- Command palette, searchable action library, live workflow health status, and distraction-free canvas focus mode
 - Defensive local-storage recovery, dynamic dates, workflow descriptions, action duplication, and improved run history
 - Dark HSL-inspired design token treatment and keyboard-visible focus styles
 - Vitest coverage for graph validation and execution state transitions

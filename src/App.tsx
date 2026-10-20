@@ -41,6 +41,8 @@ export default function App() {
   const cancelRequested = useRef(false);
   const [notice, setNotice] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
   const importInput = useRef<HTMLInputElement>(null);
   const historyRef = useRef<Record<string, { undo: Workflow[]; redo: Workflow[] }>>({});
   const active = workflows.find((w) => w.id === activeId) ?? workflows[0];
@@ -48,6 +50,17 @@ export default function App() {
   useEffect(() => { localStorage.setItem("macro-workflows", JSON.stringify(workflows)); }, [workflows]);
   useEffect(() => { localStorage.setItem("macro-executions", JSON.stringify(executions)); }, [executions]);
   useEffect(() => { if (notice) { const t = setTimeout(() => setNotice(""), 2400); return () => clearTimeout(t); } }, [notice]);
+  useEffect(() => {
+    function handlePaletteShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        setPaletteQuery("");
+      }
+    }
+    window.addEventListener("keydown", handlePaletteShortcut);
+    return () => window.removeEventListener("keydown", handlePaletteShortcut);
+  }, []);
 
   function openBuilder(workflow = active) { if (workflow) { setActiveId(workflow.id); setPage("builder"); setSelectedId(workflow.nodes[0]?.id); } }
   function createWorkflow() { const workflow = { ...sample(), id: uid(), name: "Untitled workflow", description: "" }; setWorkflows((items) => [workflow, ...items]); openBuilder(workflow); }
@@ -136,6 +149,15 @@ export default function App() {
     setExecutions([]);
     setNotice("Run history cleared.");
   }
+  function runPaletteAction(action: string) {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    if (action === "run") void runWorkflow();
+    if (action === "undo") undoWorkflow();
+    if (action === "redo") redoWorkflow();
+    if (action === "dashboard") setPage("dashboard");
+    if (action === "builder") openBuilder();
+  }
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       const modifier = event.metaKey || event.ctrlKey;
@@ -175,8 +197,20 @@ export default function App() {
       {page === "settings" && <SettingsPage />}
     </main>
     <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) importWorkflow(file); event.target.value = ""; }} />
+    {paletteOpen && <CommandPalette query={paletteQuery} setQuery={setPaletteQuery} onClose={() => setPaletteOpen(false)} onAction={runPaletteAction} canRun={!!active && !running} />}
     {notice && <div className="toast"><Check size={15} />{notice}</div>}
   </div>;
+}
+
+function CommandPalette({ query, setQuery, onClose, onAction, canRun }: { query: string; setQuery: (value: string) => void; onClose: () => void; onAction: (action: string) => void; canRun: boolean }) {
+  const actions = [
+    { id: "run", label: "Run active workflow", hint: "⌘ Enter", enabled: canRun },
+    { id: "undo", label: "Undo last change", hint: "⌘ Z", enabled: true },
+    { id: "redo", label: "Redo last change", hint: "⇧ ⌘ Z", enabled: true },
+    { id: "builder", label: "Open workflow builder", hint: "Workspace", enabled: true },
+    { id: "dashboard", label: "Open dashboard", hint: "Workspace", enabled: true }
+  ].filter((action) => action.enabled && action.label.toLowerCase().includes(query.toLowerCase()));
+  return <div className="palette-backdrop" onClick={onClose}><div className="command-palette" onClick={(event) => event.stopPropagation()}><div className="palette-input"><Command size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") onClose(); if (event.key === "Enter" && actions[0]) onAction(actions[0].id); }} placeholder="Search commands..." /></div><div className="palette-list">{actions.length ? actions.map((action) => <button key={action.id} onClick={() => onAction(action.id)}><span>{action.label}</span><small>{action.hint}</small></button>) : <div className="empty-state">No commands match.</div>}</div><div className="palette-footer">Press <b>⌘ K</b> anytime to open · <b>Esc</b> to close</div></div></div>;
 }
 
 function Nav({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span>{active && <i />}</button>; }
@@ -193,6 +227,10 @@ function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen, o
 function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, running, onRun, onCancel, onBack, onUndo, onRedo }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; running: boolean; onRun: () => void; onCancel: () => void; onBack: () => void; onUndo: () => void; onRedo: () => void }) {
   const selected = workflow.nodes.find((n) => n.id === selectedId); const [consoleOpen, setConsoleOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [focusMode, setFocusMode] = useState(false);
+  const healthErrors = validateWorkflow(workflow);
+  const libraryActions = (Object.keys(nodeMeta) as NodeType[]).filter((type) => !["trigger", "end"].includes(type) && nodeMeta[type].label.toLowerCase().includes(libraryQuery.toLowerCase()));
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; offsetX: number; offsetY: number }>();
   const [connectionDrag, setConnectionDrag] = useState<{ sourceId: string; x: number; y: number }>();
@@ -260,10 +298,10 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
       transformOrigin: "left center"
     };
   }
-  return <div className="builder"><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button" title="Undo (⌘Z)" onClick={onUndo}><Undo2 size={16} /></button><button className="icon-button" title="Redo (⇧⌘Z)" onClick={onRedo}><Redo2 size={16} /></button><button className="icon-button" title="Duplicate selected action" onClick={() => selected && addNode(selected.type)}><Copy size={16} /></button>{running ? <button className="danger-button header-cancel" onClick={onCancel}><X size={14} /> Cancel</button> : <button className="primary small" title="Run workflow (⌘Enter)" onClick={onRun}><Play size={14} /> Run workflow</button>}</header>
-    <div className="builder-body"><aside className="library"><div className="eyebrow">Action library</div><div className="library-search"><Search size={14} /> Find an action</div>{(Object.keys(nodeMeta) as NodeType[]).filter((t) => !["trigger", "end"].includes(t)).map((type) => <button className="action-item" key={type} onClick={() => addNode(type)}><span className={`action-icon ${type}`}>{nodeMeta[type].icon}</span><span><b>{nodeMeta[type].label}</b><small>{nodeMeta[type].category}</small></span><Plus size={14} /></button>)}</aside>
+  return <div className={`builder ${focusMode ? "focus-mode" : ""}`}><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className={`health-badge ${healthErrors.length ? "invalid" : "valid"}`}>{healthErrors.length ? `${healthErrors.length} issue${healthErrors.length === 1 ? "" : "s"}` : "Workflow healthy"}</span><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button" title="Undo (⌘Z)" onClick={onUndo}><Undo2 size={16} /></button><button className="icon-button" title="Redo (⇧⌘Z)" onClick={onRedo}><Redo2 size={16} /></button><button className="icon-button" title={focusMode ? "Exit focus mode" : "Focus canvas"} onClick={() => setFocusMode((mode) => !mode)}><Maximize2 size={16} /></button><button className="icon-button" title="Duplicate selected action" onClick={() => selected && addNode(selected.type)}><Copy size={16} /></button>{running ? <button className="danger-button header-cancel" onClick={onCancel}><X size={14} /> Cancel</button> : <button className="primary small" title="Run workflow (⌘Enter)" onClick={onRun}><Play size={14} /> Run workflow</button>}</header>
+    <div className="builder-body">{!focusMode && <aside className="library"><div className="eyebrow">Action library</div><label className="library-search"><Search size={14} /><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Find an action" /></label>{libraryActions.map((type) => <button className="action-item" key={type} onClick={() => addNode(type)}><span className={`action-icon ${type}`}>{nodeMeta[type].icon}</span><span><b>{nodeMeta[type].label}</b><small>{nodeMeta[type].category}</small></span><Plus size={14} /></button>)}{!libraryActions.length && <div className="empty-state">No actions found.</div>}</aside>}
       <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Connect handles to rewire · {Math.round(zoom * 100)}%</span><span className="canvas-controls"><button className="icon-button" title="Zoom out" onClick={() => setZoom((value) => Math.max(.5, value - .1))}><ZoomOut size={14} /></button><button className="icon-button" title="Reset zoom" onClick={() => setZoom(1)}><Maximize2 size={14} /></button><button className="icon-button" title="Zoom in" onClick={() => setZoom((value) => Math.min(2, value + .1))}><ZoomIn size={14} /></button></span></div><div ref={canvasRef} className="canvas" onPointerMove={moveConnection} onPointerUp={() => { stopDragging(); setConnectionDrag(undefined); }} onPointerCancel={() => { stopDragging(); setConnectionDrag(undefined); }}><div className="canvas-content" style={{ zoom }}><div className="grid" />{workflow.edges.map((edge) => { const source = workflow.nodes.find((node) => node.id === edge.source); const target = workflow.nodes.find((node) => node.id === edge.target); return source && target ? <div key={`${edge.source}-${edge.target}`} className="connector" style={connectionStyle(source, target)} /> : null; })}{connectionDrag && <div className="connector connection-preview" style={{ left: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122, top: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38, width: Math.hypot(connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122), connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38)), transform: `rotate(${Math.atan2(connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38), connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122))}rad)`, transformOrigin: "left center" }} />}{workflow.nodes.map((node) => <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onPointerDown={(event) => startDragging(event, node)} onClick={() => setSelectedId(node.id)} title="Drag to move action"><span className="input-handle handle" onPointerUp={(event) => { event.stopPropagation(); finishConnection(node.id); }} aria-label={`Connect into ${node.label}`} /><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="output-handle handle" onPointerDown={(event) => startConnection(event, node)} aria-label={`Connect from ${node.label}`} /></button>)}</div></div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
-      <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>
+      {!focusMode && <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>}
     </div></div>;
 }
 
