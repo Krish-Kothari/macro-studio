@@ -19,6 +19,8 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 - Workflow and execution records currently persist in browser local storage so the app remains usable without an account or cloud service. Stored JSON is parsed defensively and reset safely if it becomes malformed.
 - Workflows can be exported to and imported from validated JSON files for backup, review, and transfer between local installations.
 - Run history can be searched and cleared from the Observability view; deleting a workflow also removes its associated local run records.
+- Workflows can be duplicated from the dashboard with remapped node connections, and dashboard search also matches workflow descriptions.
+- Run history supports status filters for quickly isolating completed, failed, cancelled, or in-progress runs.
 - The builder supports undo/redo with keyboard shortcuts, ⌘/Ctrl+Enter to run, Escape to cancel, and zoom controls for large workflow canvases.
 - A command palette opens with ⌘/Ctrl+K, the action library is searchable, invalid workflows show a live health badge, and Focus mode expands the canvas for complex automations.
 - The app includes a local sign-in/sign-up gateway with Web Crypto password hashing, session persistence, a profile surface, and sign-out. It is intentionally offline and does not claim to replace a hosted identity provider.

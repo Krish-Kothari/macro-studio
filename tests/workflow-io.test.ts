@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWorkflow, serializeWorkflow } from "../src/workflow-io";
+import { duplicateWorkflow, parseWorkflow, serializeWorkflow } from "../src/workflow-io";
 import type { Workflow } from "../src/types";
 
 const workflow: Workflow = {
@@ -15,6 +15,16 @@ const workflow: Workflow = {
 };
 
 describe("workflow portability", () => {
+  it("duplicates a workflow with independent IDs and connections", () => {
+    let index = 0;
+    const copy = duplicateWorkflow(workflow, () => `copy-${++index}`);
+    expect(copy.id).toBe("copy-3");
+    expect(copy.name).toBe("Portable workflow copy");
+    expect(copy.nodes.map((node) => node.id)).toEqual(["copy-1", "copy-2"]);
+    expect(copy.edges).toEqual([{ source: "copy-1", target: "copy-2" }]);
+    expect(copy.nodes[0].config).not.toBe(workflow.nodes[0].config);
+  });
+
   it("round trips a valid workflow", () => {
     expect(parseWorkflow(serializeWorkflow(workflow))).toEqual(workflow);
   });
