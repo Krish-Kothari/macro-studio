@@ -26,6 +26,7 @@ export function validateWorkflow(workflow: Workflow): string[] {
     if (outgoing.has(edge.source)) return ["V1 workflows support one sequential path only."];
     outgoing.set(edge.source, edge.target);
   }
+  if (outgoing.has(ends[0].id)) return ["The End node must be the final node in the workflow."];
   const visited = new Set<string>(); let current = starts[0].id;
   while (current) {
     if (visited.has(current)) return ["The workflow contains a cycle."];

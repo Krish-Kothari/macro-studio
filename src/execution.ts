@@ -10,11 +10,13 @@ function orderedNodes(workflow: Workflow): WorkflowNode[] {
   const next = new Map(workflow.edges.map((edge) => [edge.source, edge.target]));
   const byId = new Map(workflow.nodes.map((node) => [node.id, node]));
   const nodes: WorkflowNode[] = [];
+  const seen = new Set<string>();
   let current = workflow.nodes.find((node) => node.type === "trigger")?.id;
-  while (current) {
+  while (current && !seen.has(current)) {
     const node = byId.get(current);
     if (!node) break;
     nodes.push(node);
+    seen.add(current);
     current = next.get(current);
   }
   return nodes;
