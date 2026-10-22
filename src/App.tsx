@@ -13,7 +13,7 @@ function sample(): Workflow {
   const labels = ["Manual Trigger", "Open Documentation", "Wait 2 seconds", "Open Application", "Run Approved Local Command", "Desktop Notification", "End"];
   const configs: Record<NodeType, Record<string, string>> = {
     trigger: {}, website: { url: "https://developer.apple.com" }, wait: { duration: "2" },
-    application: {}, command: { executable: "printf", arguments: "Macro Studio ready" },
+    application: { applicationPath: "" }, command: { executable: "printf", arguments: "Macro Studio ready" },
     notification: { title: "Macro complete", message: "Developer setup finished." }, end: {}
   };
   const nodes: WorkflowNode[] = types.map((type, i) => ({ id: uid(), type, label: labels[i], config: configs[type], x: 48 + i * 154, y: 150 }));
@@ -138,6 +138,18 @@ export default function App() {
     URL.revokeObjectURL(link.href);
     setNotice("Workflow exported.");
   }
+  async function chooseApplication(node: WorkflowNode) {
+    if (!window.macroSystem?.chooseApplication) {
+      setNotice("Application selection is only available in the desktop app.");
+      return;
+    }
+    try {
+      const applicationPath = await window.macroSystem.chooseApplication();
+      if (applicationPath) updateNode(node.id, { config: { ...node.config, applicationPath } });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Application selection failed.");
+    }
+  }
   function importWorkflow(file: File) {
     file.text().then((source) => {
       try {
@@ -209,7 +221,7 @@ export default function App() {
     </aside>
     <main className="main">
       {page === "dashboard" && <Dashboard workflows={workflows} executions={executions} query={query} setQuery={setQuery} onCreate={createWorkflow} onOpen={openBuilder} onExport={exportWorkflow} onDuplicate={duplicateWorkflowFrom} onDelete={deleteWorkflow} onImport={() => importInput.current?.click()} />}
-      {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} running={!!running} onRun={runWorkflow} onCancel={cancelWorkflow} onBack={() => setPage("dashboard")} onUndo={undoWorkflow} onRedo={redoWorkflow} />}
+      {page === "builder" && active && <Builder workflow={active} selectedId={selectedId} setSelectedId={setSelectedId} updateNode={updateNode} updateWorkflow={updateWorkflow} addNode={addNode} removeNode={removeNode} chooseApplication={chooseApplication} running={!!running} onRun={runWorkflow} onCancel={cancelWorkflow} onBack={() => setPage("dashboard")} onUndo={undoWorkflow} onRedo={redoWorkflow} />}
       {page === "history" && <HistoryPage executions={executions} query={historyQuery} setQuery={setHistoryQuery} onClear={clearHistory} />}
       {page === "settings" && <SettingsPage account={account} onSignOut={() => { sessionStorage.removeItem("macro-session"); setSessionEmail(null); }} />}
     </main>
@@ -294,7 +306,7 @@ function Dashboard({ workflows, executions, query, setQuery, onCreate, onOpen, o
   </div>;
 }
 
-function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, running, onRun, onCancel, onBack, onUndo, onRedo }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; running: boolean; onRun: () => void; onCancel: () => void; onBack: () => void; onUndo: () => void; onRedo: () => void }) {
+function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkflow, addNode, removeNode, chooseApplication, running, onRun, onCancel, onBack, onUndo, onRedo }: { workflow: Workflow; selectedId?: string; setSelectedId: (id: string) => void; updateNode: (id: string, patch: Partial<WorkflowNode>) => void; updateWorkflow: (patch: Partial<Workflow>) => void; addNode: (type: NodeType) => void; removeNode: (id: string) => void; chooseApplication: (node: WorkflowNode) => Promise<void>; running: boolean; onRun: () => void; onCancel: () => void; onBack: () => void; onUndo: () => void; onRedo: () => void }) {
   const selected = workflow.nodes.find((n) => n.id === selectedId); const [consoleOpen, setConsoleOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [libraryQuery, setLibraryQuery] = useState("");
@@ -303,6 +315,7 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
   const libraryActions = (Object.keys(nodeMeta) as NodeType[]).filter((type) => !["trigger", "end"].includes(type) && nodeMeta[type].label.toLowerCase().includes(libraryQuery.toLowerCase()));
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; offsetX: number; offsetY: number }>();
+  const connectionDragRef = useRef<{ sourceId: string; x: number; y: number }>();
   const [connectionDrag, setConnectionDrag] = useState<{ sourceId: string; x: number; y: number }>();
   function startDragging(event: React.PointerEvent<HTMLButtonElement>, node: WorkflowNode) {
     if (running || !canvasRef.current || (event.target as HTMLElement).closest(".handle")) return;
@@ -332,20 +345,31 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
     event.stopPropagation();
     event.preventDefault();
     const bounds = canvasRef.current.getBoundingClientRect();
-    setConnectionDrag({ sourceId: node.id, x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom });
+    const next = { sourceId: node.id, x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom };
+    connectionDragRef.current = next;
+    setConnectionDrag(next);
   }
   function moveConnection(event: React.PointerEvent<HTMLDivElement>) {
-    if (!connectionDrag || !canvasRef.current) return;
+    const drag = connectionDragRef.current;
+    if (!drag || !canvasRef.current) return;
     const bounds = canvasRef.current.getBoundingClientRect();
-    setConnectionDrag({ ...connectionDrag, x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom });
+    const next = { ...drag, x: (event.clientX - bounds.left) / zoom, y: (event.clientY - bounds.top) / zoom };
+    connectionDragRef.current = next;
+    setConnectionDrag(next);
     dragNode(event);
   }
-  function finishConnection(targetId: string) {
-    if (!connectionDrag || connectionDrag.sourceId === targetId) {
+  function finishConnection(targetId?: string) {
+    const drag = connectionDragRef.current;
+    connectionDragRef.current = undefined;
+    if (!targetId) {
       setConnectionDrag(undefined);
       return;
     }
-    const source = workflow.nodes.find((node) => node.id === connectionDrag.sourceId);
+    if (!drag || drag.sourceId === targetId) {
+      setConnectionDrag(undefined);
+      return;
+    }
+    const source = workflow.nodes.find((node) => node.id === drag.sourceId);
     const target = workflow.nodes.find((node) => node.id === targetId);
     if (!source || !target || source.type === "end" || target.type === "trigger") {
       setConnectionDrag(undefined);
@@ -357,6 +381,10 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
     updateWorkflow({ edges });
     setSelectedId(target.id);
     setConnectionDrag(undefined);
+  }
+  function finishConnectionAtPointer(event: React.PointerEvent<HTMLDivElement>) {
+    const target = (event.target as HTMLElement).closest<HTMLElement>(".node");
+    finishConnection(target?.dataset.nodeId);
   }
   function connectionStyle(source: WorkflowNode, target: WorkflowNode): React.CSSProperties {
     const sourceX = source.x + 122;
@@ -375,8 +403,8 @@ function Builder({ workflow, selectedId, setSelectedId, updateNode, updateWorkfl
   }
   return <div className={`builder ${focusMode ? "focus-mode" : ""}`}><header className="builder-header"><button className="icon-button" onClick={onBack}><ArrowLeft size={17} /></button><input className="workflow-title" value={workflow.name} onChange={(e) => updateWorkflow({ name: e.target.value })} /><span className={`health-badge ${healthErrors.length ? "invalid" : "valid"}`}>{healthErrors.length ? `${healthErrors.length} issue${healthErrors.length === 1 ? "" : "s"}` : "Workflow healthy"}</span><span className="saved"><span /> Saved locally</span><span className="header-spacer" /><button className="icon-button" title="Undo (⌘Z)" onClick={onUndo}><Undo2 size={16} /></button><button className="icon-button" title="Redo (⇧⌘Z)" onClick={onRedo}><Redo2 size={16} /></button><button className="icon-button" title={focusMode ? "Exit focus mode" : "Focus canvas"} onClick={() => setFocusMode((mode) => !mode)}><Maximize2 size={16} /></button><button className="icon-button" title="Duplicate selected action" onClick={() => selected && addNode(selected.type)}><Copy size={16} /></button>{running ? <button className="danger-button header-cancel" onClick={onCancel}><X size={14} /> Cancel</button> : <button className="primary small" title="Run workflow (⌘Enter)" onClick={onRun}><Play size={14} /> Run workflow</button>}</header>
     <div className="builder-body">{!focusMode && <aside className="library"><div className="eyebrow">Action library</div><label className="library-search"><Search size={14} /><input value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Find an action" /></label>{libraryActions.map((type) => <button className="action-item" key={type} onClick={() => addNode(type)}><span className={`action-icon ${type}`}>{nodeMeta[type].icon}</span><span><b>{nodeMeta[type].label}</b><small>{nodeMeta[type].category}</small></span><Plus size={14} /></button>)}{!libraryActions.length && <div className="empty-state">No actions found.</div>}</aside>}
-      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Connect handles to rewire · {Math.round(zoom * 100)}%</span><span className="canvas-controls"><button className="icon-button" title="Zoom out" onClick={() => setZoom((value) => Math.max(.5, value - .1))}><ZoomOut size={14} /></button><button className="icon-button" title="Reset zoom" onClick={() => setZoom(1)}><Maximize2 size={14} /></button><button className="icon-button" title="Zoom in" onClick={() => setZoom((value) => Math.min(2, value + .1))}><ZoomIn size={14} /></button></span></div><div ref={canvasRef} className="canvas" onPointerMove={moveConnection} onPointerUp={() => { stopDragging(); setConnectionDrag(undefined); }} onPointerCancel={() => { stopDragging(); setConnectionDrag(undefined); }}><div className="canvas-content" style={{ zoom }}><div className="grid" />{workflow.edges.map((edge) => { const source = workflow.nodes.find((node) => node.id === edge.source); const target = workflow.nodes.find((node) => node.id === edge.target); return source && target ? <div key={`${edge.source}-${edge.target}`} className="connector" style={connectionStyle(source, target)} /> : null; })}{connectionDrag && <div className="connector connection-preview" style={{ left: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122, top: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38, width: Math.hypot(connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122), connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38)), transform: `rotate(${Math.atan2(connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38), connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122))}rad)`, transformOrigin: "left center" }} />}{workflow.nodes.map((node) =>       <button key={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onPointerDown={(event) => startDragging(event, node)} onPointerMove={dragNode} onPointerUp={stopDragging} onPointerCancel={stopDragging} onClick={() => setSelectedId(node.id)} title="Drag to move action"><span className="input-handle handle" onPointerUp={(event) => { event.stopPropagation(); finishConnection(node.id); }} aria-label={`Connect into ${node.label}`} /><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="output-handle handle" onPointerDown={(event) => startConnection(event, node)} aria-label={`Connect from ${node.label}`} /></button>)}</div></div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
-      {!focusMode && <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>)}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>}
+      <section className="canvas-wrap"><div className="canvas-toolbar"><span className="eyebrow">CANVAS / SEQUENTIAL PATH</span><span>{workflow.nodes.length} actions · Drag ● to ● to rewire · {Math.round(zoom * 100)}%</span><span className="canvas-controls"><button className="icon-button" title="Zoom out" onClick={() => setZoom((value) => Math.max(.5, value - .1))}><ZoomOut size={14} /></button><button className="icon-button" title="Reset zoom" onClick={() => setZoom(1)}><Maximize2 size={14} /></button><button className="icon-button" title="Zoom in" onClick={() => setZoom((value) => Math.min(2, value + .1))}><ZoomIn size={14} /></button></span></div><div ref={canvasRef} className="canvas" onPointerMove={moveConnection} onPointerUp={(event) => { stopDragging(); finishConnectionAtPointer(event); }} onPointerCancel={() => { stopDragging(); setConnectionDrag(undefined); }}><div className="canvas-content" style={{ zoom }}><div className="grid" />{workflow.edges.map((edge) => { const source = workflow.nodes.find((node) => node.id === edge.source); const target = workflow.nodes.find((node) => node.id === edge.target); return source && target ? <div key={`${edge.source}-${edge.target}`} className="connector" style={connectionStyle(source, target)} /> : null; })}{connectionDrag && <div className="connector connection-preview" style={{ left: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122, top: (workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38, width: Math.hypot(connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122), connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 38)), transform: `rotate(${Math.atan2(connectionDrag.y - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.y ?? 0) + 38), connectionDrag.x - ((workflow.nodes.find((node) => node.id === connectionDrag.sourceId)?.x ?? 0) + 122))}rad)`, transformOrigin: "left center" }} />}{workflow.nodes.map((node) =>             <button key={node.id} data-node-id={node.id} className={`node ${node.type} ${selectedId === node.id ? "selected" : ""}`} style={{ left: node.x, top: node.y }} onPointerDown={(event) => startDragging(event, node)} onPointerMove={dragNode} onPointerUp={(event) => { stopDragging(event); finishConnection(node.id); }} onPointerCancel={(event) => { stopDragging(event); finishConnection(); }} onClick={() => setSelectedId(node.id)} title="Drag to move action"><span className="input-handle handle" data-node-id={node.id} onPointerUp={(event) => { event.stopPropagation(); finishConnection(node.id); }} aria-label={`Connect into ${node.label}`} /><span className="node-icon">{nodeMeta[node.type].icon}</span><span><small>{nodeMeta[node.type].category}</small><b>{node.label}</b></span><span className="output-handle handle" onPointerDown={(event) => startConnection(event, node)} aria-label={`Connect from ${node.label}`} /></button>)}</div></div><button className="console-toggle" onClick={() => setConsoleOpen(!consoleOpen)}><Activity size={14} /> Execution console <span>{consoleOpen ? "Collapse" : "Expand"}</span></button>{consoleOpen && <div className="console"><span className="status-dot" /> {running ? "Execution in progress" : "Ready for execution"} <span>{running ? "Actions are reported as they complete." : "Validate your path before running."}</span></div>}</section>
+      {!focusMode && <aside className="inspector"><div className="eyebrow">Properties</div><label>Workflow description<textarea value={workflow.description} onChange={(e) => updateWorkflow({ description: e.target.value })} /></label>{selected ? <><div className="inspector-title"><span className={`action-icon ${selected.type}`}>{nodeMeta[selected.type].icon}</span><div><b>{selected.label}</b><small>{selected.type.toUpperCase()} ACTION</small></div></div><label>Display name<input value={selected.label} onChange={(e) => updateNode(selected.id, { label: e.target.value })} /></label>{Object.entries(selected.config).map(([key, value]) => <label key={key}>{key.replace(/([A-Z])/g, " $1")}<input value={value} onChange={(e) => updateNode(selected.id, { config: { ...selected.config, [key]: e.target.value } })} /></label>      )}{selected.type === "application" && <button className="secondary" onClick={() => void chooseApplication(selected)}>Choose application</button>}{selected.type === "website" && !selected.config.url && <button className="text-button" onClick={() => updateNode(selected.id, { config: { url: "https://" } })}>+ Add URL</button>}{selected.type !== "trigger" && selected.type !== "end" && <button className="danger-button" onClick={() => removeNode(selected.id)}><Trash2 size={14} /> Remove action</button>}</> : <div className="inspector-empty">Select an action on the canvas to configure it.</div>}</aside>}
     </div></div>;
 }
 

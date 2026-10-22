@@ -51,6 +51,13 @@ async function executeNode(node: WorkflowNode, isCancelled: () => boolean): Prom
     await window.macroSystem.openUrl(url);
     return `Opened ${url}.`;
   }
+  if (node.type === "application") {
+    const applicationPath = node.config.applicationPath?.trim();
+    if (!applicationPath) throw new Error("Choose an application before running this action.");
+    if (!window.macroSystem?.openApplication) throw new Error("The desktop application bridge is unavailable.");
+    await window.macroSystem.openApplication(applicationPath);
+    return `Opened ${applicationPath}.`;
+  }
   if (node.type === "notification") {
     if (typeof Notification === "undefined") throw new Error("Desktop notifications are unavailable in this environment.");
     if (Notification.permission === "default") await Notification.requestPermission();
@@ -58,7 +65,7 @@ async function executeNode(node: WorkflowNode, isCancelled: () => boolean): Prom
     new Notification(node.config.title || "Macro Studio", { body: node.config.message || "Workflow completed." });
     return "Notification delivered.";
   }
-  if (node.type === "command" || node.type === "application") {
+  if (node.type === "command") {
     throw new Error(`${node.label} requires explicit desktop execution approval and is not enabled in this build.`);
   }
   return node.type === "trigger" ? "Manual trigger accepted." : "Workflow completed.";

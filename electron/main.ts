@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
 
 const isDev = !app.isPackaged;
@@ -14,7 +14,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: false
     }
   });
   if (isDev) window.loadURL("http://localhost:5173");
@@ -25,6 +25,22 @@ ipcMain.handle("system:open-url", async (_event, url: string) => {
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only HTTP and HTTPS URLs are supported.");
   await shell.openExternal(parsed.toString());
+  return true;
+});
+
+ipcMain.handle("system:choose-application", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "Choose an application",
+    properties: ["openFile"]
+  });
+  return result.canceled ? undefined : result.filePaths[0];
+});
+
+ipcMain.handle("system:open-application", async (_event, applicationPath: string) => {
+  const pathToOpen = applicationPath.trim();
+  if (!pathToOpen) throw new Error("Application path is required.");
+  const error = await shell.openPath(pathToOpen);
+  if (error) throw new Error(error);
   return true;
 });
 
