@@ -13,7 +13,8 @@ function sample(): Workflow {
   const labels = ["Manual Trigger", "Open Documentation", "Wait 2 seconds", "Open Application", "Run Approved Local Command", "Desktop Notification", "End"];
   const configs: Record<NodeType, Record<string, string>> = {
     trigger: {}, website: { url: "https://developer.apple.com" }, wait: { duration: "2" },
-    application: { applicationPath: "" }, command: { executable: "printf", arguments: "Macro Studio ready" },
+    application: { applicationPath: "" }, openPath: { path: "" }, copyText: { text: "" }, currentDate: { format: "localized" },
+    command: { executable: "printf", arguments: "Macro Studio ready" },
     notification: { title: "Macro complete", message: "Developer setup finished." }, end: {}
   };
   const nodes: WorkflowNode[] = types.map((type, i) => ({ id: uid(), type, label: labels[i], config: configs[type], x: 48 + i * 154, y: 150 }));
@@ -29,6 +30,19 @@ function readStored<T>(key: string, fallback: T): T {
   }
 }
 const initial = (): Workflow[] => readStored("macro-workflows", [sample()]);
+function defaultConfig(type: NodeType): Record<string, string> {
+  switch (type) {
+    case "website": return { url: "https://" };
+    case "wait": return { duration: "1" };
+    case "application": return { applicationPath: "" };
+    case "openPath": return { path: "" };
+    case "copyText": return { text: "" };
+    case "currentDate": return { format: "localized" };
+    case "command": return { executable: "printf", arguments: "Macro Studio ready" };
+    case "notification": return { title: "Macro complete", message: "Workflow completed." };
+    default: return {};
+  }
+}
 type LocalAccount = { email: string; name: string; passwordHash: string; createdAt: string };
 async function hashPassword(password: string): Promise<string> {
   const bytes = new TextEncoder().encode(password);
@@ -107,7 +121,7 @@ export default function App() {
   function updateNode(id: string, patch: Partial<WorkflowNode>) { if (!active) return; updateWorkflow({ nodes: active.nodes.map((n) => n.id === id ? { ...n, ...patch } : n) }); }
   function addNode(type: NodeType) {
     if (!active) return;
-    const previous = active.nodes[active.nodes.length - 2]; const end = active.nodes[active.nodes.length - 1]; const newNode: WorkflowNode = { id: uid(), type, label: nodeMeta[type].label, config: {}, x: (previous?.x ?? 100) + 150, y: 150 };
+    const previous = active.nodes[active.nodes.length - 2]; const end = active.nodes[active.nodes.length - 1]; const newNode: WorkflowNode = { id: uid(), type, label: nodeMeta[type].label, config: defaultConfig(type), x: (previous?.x ?? 100) + 150, y: 150 };
     updateWorkflow({ nodes: [...active.nodes.slice(0, -1), newNode, end], edges: [...active.edges.filter((e) => e.target !== end.id), { source: previous?.id ?? active.nodes[0].id, target: newNode.id }, { source: newNode.id, target: end.id }] });
     setSelectedId(newNode.id);
   }

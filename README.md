@@ -27,8 +27,8 @@ Run the validation tests with `npm test` and build the renderer/main process wit
 
 ## Current execution behavior
 
-The sequential execution engine validates the graph before every run and reports running, succeeded, failed, and cancelled step states. Wait actions are asynchronous and cancellable, website actions use the validated Electron URL bridge, and notification actions request browser notification permission. Application and command nodes are intentionally blocked until the explicit desktop approval and native adapter layer is implemented; they fail with an actionable message rather than recording a false success.
+The sequential execution engine validates the graph before every run and reports running, succeeded, failed, and cancelled step states. Wait actions are asynchronous and cancellable, website and file/folder actions use validated Electron bridges, copy-text actions use the browser clipboard API, current-date actions return a localized or ISO timestamp, and notification actions request browser notification permission. Command nodes remain intentionally blocked until explicit desktop execution approval is implemented; they fail with an actionable message rather than recording a false success.
 
 ## Known limitations
 
-The editor currently models and validates a sequential path. Full OS adapters (application launch, approved child processes, cancellable waits, notifications), SQLite migrations, and packaged installer signing are the next integration layer; no unsupported capability is represented as successful execution. Branching and parallel execution are intentionally rejected until the graph model supports them.
+The editor currently models and validates a sequential path. Approved child processes, SQLite migrations, and packaged installer signing are the next integration layer; no unsupported capability is represented as successful execution. Branching and parallel execution are intentionally rejected until the graph model supports them.

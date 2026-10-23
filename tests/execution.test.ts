@@ -27,4 +27,15 @@ describe("workflow execution", () => {
     expect(result.status).toBe("cancelled");
     expect(result.error).toBe("Execution cancelled.");
   });
+
+  it("reports the current date action output", async () => {
+    const currentDateWorkflow: Workflow = {
+      ...workflow,
+      nodes: workflow.nodes.map((node) => node.type === "wait" ? { ...node, type: "currentDate" as const, label: "Current Date", config: { format: "iso" } } : node)
+    };
+    const result = await executeWorkflow(currentDateWorkflow, execution, { isCancelled: () => false, onUpdate: () => undefined });
+    const dateStep = result.stepExecutions.find((step) => step.nodeId === "b");
+    expect(result.status).toBe("completed");
+    expect(dateStep?.output).toMatch(/^Current date: \d{4}-\d{2}-\d{2}T/);
+  });
 });

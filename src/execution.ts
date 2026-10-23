@@ -58,6 +58,25 @@ async function executeNode(node: WorkflowNode, isCancelled: () => boolean): Prom
     await window.macroSystem.openApplication(applicationPath);
     return `Opened ${applicationPath}.`;
   }
+  if (node.type === "openPath") {
+    const path = node.config.path?.trim();
+    if (!path) throw new Error("A file or folder path is required.");
+    if (!window.macroSystem?.openApplication) throw new Error("The desktop path bridge is unavailable.");
+    await window.macroSystem.openApplication(path);
+    return `Opened ${path}.`;
+  }
+  if (node.type === "copyText") {
+    const text = node.config.text ?? "";
+    if (!text.trim()) throw new Error("Text to copy is required.");
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable in this environment.");
+    await navigator.clipboard.writeText(text);
+    return `Copied ${text.length} characters.`;
+  }
+  if (node.type === "currentDate") {
+    const format = node.config.format || "localized";
+    const value = format === "iso" ? new Date().toISOString() : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format();
+    return `Current date: ${value}`;
+  }
   if (node.type === "notification") {
     if (typeof Notification === "undefined") throw new Error("Desktop notifications are unavailable in this environment.");
     if (Notification.permission === "default") await Notification.requestPermission();
