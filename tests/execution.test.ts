@@ -38,4 +38,19 @@ describe("workflow execution", () => {
     expect(result.status).toBe("completed");
     expect(dateStep?.output).toMatch(/^Current date: \d{4}-\d{2}-\d{2}T/);
   });
+
+  it("plays audio through the desktop media bridge", async () => {
+    const playMedia = vi.fn(async () => true);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { macroSystem: { playMedia } }
+    });
+    const musicWorkflow: Workflow = {
+      ...workflow,
+      nodes: workflow.nodes.map((node) => node.type === "wait" ? { ...node, type: "playMusic" as const, label: "Play Music", config: { path: "/tmp/example.mp3" } } : node)
+    };
+    const result = await executeWorkflow(musicWorkflow, execution, { isCancelled: () => false, onUpdate: () => undefined });
+    expect(result.status).toBe("completed");
+    expect(playMedia).toHaveBeenCalledWith("/tmp/example.mp3");
+  });
 });

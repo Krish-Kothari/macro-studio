@@ -77,6 +77,13 @@ async function executeNode(node: WorkflowNode, isCancelled: () => boolean): Prom
     const value = format === "iso" ? new Date().toISOString() : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format();
     return `Current date: ${value}`;
   }
+  if (node.type === "playSound" || node.type === "playMusic") {
+    const mediaPath = node.config.path?.trim();
+    if (!mediaPath) throw new Error(`${node.type === "playSound" ? "Sound" : "Music"} file path is required.`);
+    if (!window.macroSystem?.playMedia) throw new Error("The desktop audio bridge is unavailable.");
+    await window.macroSystem.playMedia(mediaPath);
+    return `Playing ${mediaPath}.`;
+  }
   if (node.type === "notification") {
     if (typeof Notification === "undefined") throw new Error("Desktop notifications are unavailable in this environment.");
     if (Notification.permission === "default") await Notification.requestPermission();

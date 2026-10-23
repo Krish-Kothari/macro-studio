@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Workflow, NodeType } from "./types";
 
 const node = z.object({
-  id: z.string().min(1), type: z.enum(["trigger", "website", "wait", "application", "openPath", "copyText", "currentDate", "command", "notification", "end"] as [NodeType, ...NodeType[]]),
+  id: z.string().min(1), type: z.enum(["trigger", "website", "wait", "application", "openPath", "copyText", "currentDate", "playSound", "playMusic", "command", "notification", "end"] as [NodeType, ...NodeType[]]),
   label: z.string().min(1), config: z.record(z.string()), x: z.number(), y: z.number()
 });
 export const workflowSchema = z.object({

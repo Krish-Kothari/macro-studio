@@ -36,9 +36,26 @@ ipcMain.handle("system:choose-application", async () => {
   return result.canceled ? undefined : result.filePaths[0];
 });
 
+ipcMain.handle("system:choose-media", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "Choose an audio file",
+    properties: ["openFile"],
+    filters: [{ name: "Audio", extensions: ["mp3", "wav", "m4a", "aac", "ogg", "flac", "aiff"] }]
+  });
+  return result.canceled ? undefined : result.filePaths[0];
+});
+
 ipcMain.handle("system:open-application", async (_event, applicationPath: string) => {
   const pathToOpen = applicationPath.trim();
   if (!pathToOpen) throw new Error("Application path is required.");
+  const error = await shell.openPath(pathToOpen);
+  if (error) throw new Error(error);
+  return true;
+});
+
+ipcMain.handle("system:play-media", async (_event, mediaPath: string) => {
+  const pathToOpen = mediaPath.trim();
+  if (!pathToOpen) throw new Error("Audio file path is required.");
   const error = await shell.openPath(pathToOpen);
   if (error) throw new Error(error);
   return true;
