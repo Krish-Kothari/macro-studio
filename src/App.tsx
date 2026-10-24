@@ -26,11 +26,27 @@ function readStored<T>(key: string, fallback: T): T {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) as T : fallback;
   } catch {
-    localStorage.removeItem(key);
+    try { localStorage.removeItem(key); } catch { /* Storage may be unavailable. */ }
     return fallback;
   }
 }
-const initial = (): Workflow[] => readStored("macro-workflows", [sample()]);
+const isWorkflowList = (value: unknown): value is Workflow[] =>
+  Array.isArray(value) && value.every((item) => validateWorkflow(item as Workflow).length === 0);
+const isExecutionList = (value: unknown): value is Execution[] =>
+  Array.isArray(value) && value.every((item) => {
+    if (!item || typeof item !== "object") return false;
+    const execution = item as Partial<Execution>;
+    return typeof execution.id === "string" && typeof execution.workflowId === "string" &&
+      typeof execution.workflowName === "string" && Array.isArray(execution.stepExecutions);
+  });
+function readWorkflows(): Workflow[] {
+  const value = readStored<unknown>("macro-workflows", null);
+  return isWorkflowList(value) ? value : [sample()];
+}
+function readExecutions(): Execution[] {
+  const value = readStored<unknown>("macro-executions", []);
+  return isExecutionList(value) ? value : [];
+}
 function defaultConfig(type: NodeType): Record<string, string> {
   switch (type) {
     case "website": return { url: "https://" };
@@ -46,18 +62,33 @@ function defaultConfig(type: NodeType): Record<string, string> {
     default: return {};
   }
 }
-type LocalAccount = { email: string; name: string; passwordHash: string; createdAt: string };
-async function hashPassword(password: string): Promise<string> {
+type LocalAccount = { email: string; name: string; passwordHash: string; passwordSalt?: string; createdAt: string };
+const isLocalAccount = (value: unknown): value is LocalAccount => {
+  if (!value || typeof value !== "object") return false;
+  const account = value as Partial<LocalAccount>;
+  return typeof account.email === "string" && typeof account.name === "string" &&
+    typeof account.passwordHash === "string" && typeof account.createdAt === "string" &&
+    (account.passwordSalt === undefined || typeof account.passwordSalt === "string");
+};
+async function hashPassword(password: string, salt: string): Promise<string> {
   const bytes = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const key = await crypto.subtle.importKey("raw", bytes, "PBKDF2", false, ["deriveBits"]);
+  const digest = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: new TextEncoder().encode(salt), iterations: 120000, hash: "SHA-256" }, key, 256);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function legacyHashPassword(password: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export default function App() {
   const [sessionEmail, setSessionEmail] = useState(() => sessionStorage.getItem("macro-session"));
-  const [account, setAccount] = useState<LocalAccount | null>(() => readStored<LocalAccount | null>("macro-account", null));
-  const [workflows, setWorkflows] = useState<Workflow[]>(initial);
-  const [executions, setExecutions] = useState<Execution[]>(() => readStored<Execution[]>("macro-executions", []));
+  const [account, setAccount] = useState<LocalAccount | null>(() => {
+    const stored = readStored<unknown>("macro-account", null);
+    return isLocalAccount(stored) ? stored : null;
+  });
+  const [workflows, setWorkflows] = useState<Workflow[]>(readWorkflows);
+  const [executions, setExecutions] = useState<Execution[]>(readExecutions);
   const [page, setPage] = useState<"dashboard" | "builder" | "history" | "settings">("dashboard");
   const [activeId, setActiveId] = useState(workflows[0]?.id);
   const [selectedId, setSelectedId] = useState<string>();
@@ -123,7 +154,7 @@ export default function App() {
   }
   function updateNode(id: string, patch: Partial<WorkflowNode>) { if (!active) return; updateWorkflow({ nodes: active.nodes.map((n) => n.id === id ? { ...n, ...patch } : n) }); }
   function addNode(type: NodeType) {
-    if (!active) return;
+    if (!active || type === "trigger" || type === "end") return;
     const previous = active.nodes[active.nodes.length - 2]; const end = active.nodes[active.nodes.length - 1]; const newNode: WorkflowNode = { id: uid(), type, label: nodeMeta[type].label, config: defaultConfig(type), x: (previous?.x ?? 100) + 150, y: 150 };
     updateWorkflow({ nodes: [...active.nodes.slice(0, -1), newNode, end], edges: [...active.edges.filter((e) => e.target !== end.id), { source: previous?.id ?? active.nodes[0].id, target: newNode.id }, { source: newNode.id, target: end.id }] });
     setSelectedId(newNode.id);
@@ -137,13 +168,21 @@ export default function App() {
     setRunning(active.id);
     cancelRequested.current = false;
     setExecutions((items) => [execution, ...items]);
-    const result = await executeWorkflow(active, execution, {
-      isCancelled: () => cancelRequested.current,
-      onUpdate: (updated) => setExecutions((items) => items.map((item) => item.id === updated.id ? updated : item))
-    });
-    setRunning(undefined);
-    if (result.status === "completed") updateWorkflow({ lastRunAt: result.finishedAt });
-    setNotice(result.status === "completed" ? "Execution completed successfully" : result.error || `Execution ${result.status}.`);
+    try {
+      const result = await executeWorkflow(active, execution, {
+        isCancelled: () => cancelRequested.current,
+        onUpdate: (updated) => setExecutions((items) => items.map((item) => item.id === updated.id ? updated : item))
+      });
+      if (result.status === "completed") updateWorkflow({ lastRunAt: result.finishedAt });
+      setNotice(result.status === "completed" ? "Execution completed successfully" : result.error || `Execution ${result.status}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Workflow execution failed.";
+      const failed = { ...execution, status: "failed" as const, finishedAt: now(), error: message };
+      setExecutions((items) => items.map((item) => item.id === execution.id ? failed : item));
+      setNotice(message);
+    } finally {
+      setRunning(undefined);
+    }
   }
   function cancelWorkflow() { if (running) cancelRequested.current = true; }
   function exportWorkflow(workflow: Workflow) {
@@ -298,11 +337,21 @@ function AuthPage({ account, onAuthenticated }: { account: LocalAccount | null; 
     if (mode === "signup" && name.trim().length < 2) return setError("Tell us your name to personalize the studio.");
     setBusy(true);
     try {
-      const passwordHash = await hashPassword(password);
-      const stored = readStored<LocalAccount | null>("macro-account", null);
+      const storedValue = readStored<unknown>("macro-account", null);
+      const stored = isLocalAccount(storedValue) ? storedValue : null;
       if (mode === "signin") {
+        const passwordHash = stored?.passwordSalt
+          ? await hashPassword(password, stored.passwordSalt)
+          : await legacyHashPassword(password);
         if (!stored || stored.email !== normalizedEmail || stored.passwordHash !== passwordHash) {
           setError("Those credentials do not match this local workspace.");
+          return;
+        }
+        if (!stored.passwordSalt) {
+          const passwordSalt = crypto.randomUUID();
+          const upgraded = { ...stored, passwordHash: await hashPassword(password, passwordSalt), passwordSalt };
+          localStorage.setItem("macro-account", JSON.stringify(upgraded));
+          onAuthenticated(upgraded);
           return;
         }
         onAuthenticated(stored);
@@ -311,7 +360,8 @@ function AuthPage({ account, onAuthenticated }: { account: LocalAccount | null; 
           setError("This local app supports one workspace account. Sign in with the existing account or reset local data.");
           return;
         }
-        const nextAccount: LocalAccount = { email: normalizedEmail, name: name.trim(), passwordHash, createdAt: now() };
+        const passwordSalt = crypto.randomUUID();
+        const nextAccount: LocalAccount = { email: normalizedEmail, name: name.trim(), passwordHash: await hashPassword(password, passwordSalt), passwordSalt, createdAt: now() };
         localStorage.setItem("macro-account", JSON.stringify(nextAccount));
         onAuthenticated(nextAccount);
       }

@@ -14,7 +14,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   });
   if (isDev) window.loadURL("http://localhost:5173");
@@ -22,6 +22,7 @@ function createWindow() {
 }
 
 ipcMain.handle("system:open-url", async (_event, url: string) => {
+  if (typeof url !== "string") throw new Error("A URL is required.");
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Only HTTP and HTTPS URLs are supported.");
   await shell.openExternal(parsed.toString());
@@ -46,6 +47,7 @@ ipcMain.handle("system:choose-media", async () => {
 });
 
 ipcMain.handle("system:open-application", async (_event, applicationPath: string) => {
+  if (typeof applicationPath !== "string") throw new Error("Application path is required.");
   const pathToOpen = applicationPath.trim();
   if (!pathToOpen) throw new Error("Application path is required.");
   const error = await shell.openPath(pathToOpen);
@@ -54,6 +56,7 @@ ipcMain.handle("system:open-application", async (_event, applicationPath: string
 });
 
 ipcMain.handle("system:play-media", async (_event, mediaPath: string) => {
+  if (typeof mediaPath !== "string") throw new Error("Audio file path is required.");
   const pathToOpen = mediaPath.trim();
   if (!pathToOpen) throw new Error("Audio file path is required.");
   const error = await shell.openPath(pathToOpen);
