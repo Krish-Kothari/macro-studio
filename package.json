@@ -11,6 +11,9 @@
     "test": "vitest run",
     "preview": "vite preview",
     "dist": "npm run build && electron-builder --mac dmg",
+    "dist:arm64": "npm run build && electron-builder --mac dmg --arm64",
+    "dist:x64": "npm run build && electron-builder --mac dmg --x64",
+    "dist:universal": "npm run build && electron-builder --mac dmg --universal",
     "dist:dir": "npm run build && electron-builder --mac dir"
   },
   "dependencies": {
@@ -42,6 +45,7 @@
     "directories": {
       "output": "release"
     },
+    "icon": "build/icon.icns",
     "mac": {
       "target": "dmg",
       "category": "public.app-category.productivity"

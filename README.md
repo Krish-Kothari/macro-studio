@@ -27,6 +27,15 @@ npx electron-builder --mac dmg --arm64
 npx electron-builder --mac dmg --x64
 ```
 
+The app uses the Macro Studio icon from `build/icon.icns`. For distribution to
+other Macs, use `npm run dist:universal` to create one DMG for both Apple
+Silicon and Intel Macs, or use `npm run dist:arm64` / `npm run dist:x64` for
+architecture-specific installers. These local builds are unsigned; macOS may
+require users to choose **Open** from the app's context menu. Trusted
+distribution without that warning requires an Apple Developer certificate,
+Developer ID signing, and notarization credentials configured for
+electron-builder.
+
 The packaged app is unsigned unless Apple signing and notarization credentials
 are configured. macOS may require choosing **Open** from the app's context menu
 the first time it is launched.
