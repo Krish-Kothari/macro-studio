@@ -11,6 +11,26 @@ npm run dev
 
 Run the validation tests with `npm test` and build the renderer/main process with `npm run build`.
 
+## Build a macOS DMG
+
+On macOS, create an unsigned DMG with:
+
+```bash
+npm run dist
+```
+
+The DMG is written to the `release/` directory. To build only for a specific
+architecture, use `npm run build` followed by one of:
+
+```bash
+npx electron-builder --mac dmg --arm64
+npx electron-builder --mac dmg --x64
+```
+
+The packaged app is unsigned unless Apple signing and notarization credentials
+are configured. macOS may require choosing **Open** from the app's context menu
+the first time it is launched.
+
 ## Architecture
 
 - `src/` contains the renderer UI, shared workflow types, and validation.

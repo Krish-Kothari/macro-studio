@@ -9,7 +9,9 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dist": "npm run build && electron-builder --mac dmg",
+    "dist:dir": "npm run build && electron-builder --mac dir"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -26,6 +28,23 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
     "vitest": "^2.1.8",
-    "wait-on": "^8.0.1"
+    "wait-on": "^8.0.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.macrostudio.app",
+    "productName": "Macro Studio",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    }
   }
 }
